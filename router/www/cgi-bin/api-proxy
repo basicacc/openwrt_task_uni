@@ -1,0 +1,24 @@
+#!/bin/sh
+
+echo "Content-Type: application/json"
+echo "Access-Control-Allow-Origin: *"
+echo "Access-Control-Allow-Methods: GET, POST, OPTIONS"
+echo "Access-Control-Allow-Headers: Content-Type"
+echo ""
+
+ENDPOINT="${PATH_INFO}"
+
+if [ "$REQUEST_METHOD" = "POST" ]; then
+    POST_DATA=$(cat)
+fi
+
+OTP_SERVER="http://192.168.56.1:5000"
+
+if [ "$REQUEST_METHOD" = "POST" ]; then
+    curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -d "$POST_DATA" \
+        "${OTP_SERVER}/api${ENDPOINT}"
+else
+    curl -s "${OTP_SERVER}/api${ENDPOINT}"
+fi

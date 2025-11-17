@@ -1,0 +1,97 @@
+#!/bin/sh
+
+logger -t captive-firewall "Setting up captive portal firewall rules..."
+
+sleep 5
+
+iptables -L CAPTIVE_ACCEPT -n >/dev/null 2>&1
+if [ $? -eq 0 ]; then
+    logger -t captive-firewall "Cleaning existing captive portal rules..."
+    iptables -D FORWARD -i eth1 -j CAPTIVE_PORTAL 2>/dev/null
+    iptables -F CAPTIVE_PORTAL 2>/dev/null
+    iptables -F CAPTIVE_ACCEPT 2>/dev/null
+    iptables -F CAPTIVE_DNS 2>/dev/null
+    iptables -X CAPTIVE_PORTAL 2>/dev/null
+    iptables -X CAPTIVE_ACCEPT 2>/dev/null
+    iptables -X CAPTIVE_DNS 2>/dev/null
+    iptables -t nat -D PREROUTING -i eth1 -p tcp --dport 80 -j DNAT --to-destination 10.0.10.1:80 2>/dev/null
+    iptables -t nat -D PREROUTING -i eth1 -p tcp --dport 8080 -j DNAT --to-destination 192.168.56.1:5000 2>/dev/null
+fi
+
+iptables -N CAPTIVE_ACCEPT
+logger -t captive-firewall "Created CAPTIVE_ACCEPT chain"
+
+iptables -N CAPTIVE_DNS
+logger -t captive-firewall "Created CAPTIVE_DNS chain"
+
+iptables -N CAPTIVE_PORTAL
+logger -t captive-firewall "Created CAPTIVE_PORTAL chain"
+
+iptables -A FORWARD -i eth1 -j CAPTIVE_PORTAL
+
+iptables -A CAPTIVE_PORTAL -j CAPTIVE_ACCEPT
+iptables -A CAPTIVE_PORTAL -p udp --dport 53 -j CAPTIVE_DNS
+iptables -A CAPTIVE_PORTAL -p tcp --dport 53 -j CAPTIVE_DNS
+iptables -A CAPTIVE_PORTAL -d 10.0.10.1 -j ACCEPT
+iptables -A CAPTIVE_PORTAL -j REJECT --reject-with icmp-net-prohibited
+logger -t captive-firewall "Set up CAPTIVE_PORTAL rules"
+
+iptables -A CAPTIVE_DNS -d 10.0.10.1 -j ACCEPT
+logger -t captive-firewall "Set up CAPTIVE_DNS chain"
+
+if ! grep -q "address=/captive.apple.com/10.0.10.1" /etc/dnsmasq.conf; then
+    cat >> /etc/dnsmasq.conf << 'EOF'
+
+address=/captive.apple.com/10.0.10.1
+address=/connectivitycheck.gstatic.com/10.0.10.1
+address=/detectportal.firefox.com/10.0.10.1
+address=/www.msftconnecttest.com/10.0.10.1
+address=/clients3.google.com/10.0.10.1
+EOF
+    logger -t captive-firewall "Configured captive portal detection URLs in dnsmasq"
+fi
+
+if ! grep -q "dhcp-option=114" /etc/dnsmasq.conf; then
+    cat >> /etc/dnsmasq.conf << 'EOF'
+dhcp-option=114,http://10.0.10.1/simple-otp.html
+dhcp-option=160,http://10.0.10.1/cgi-bin/captive-detect
+EOF
+    logger -t captive-firewall "Configured DHCP captive portal options"
+fi
+
+cat > /www/hotspot-detect.html << 'EOF'
+<!DOCTYPE html><html><head><meta http-equiv='refresh' content='0;url=http://10.0.10.1/simple-otp.html'><title>Redirect</title></head><body>Redirecting to captive portal...</body></html>
+EOF
+
+cat > /www/generate_204 << 'EOF'
+<!DOCTYPE html><html><head><meta http-equiv='refresh' content='0;url=http://10.0.10.1/simple-otp.html'></head></html>
+EOF
+
+cat > /www/success.txt << 'EOF'
+<!DOCTYPE html><html><head><meta http-equiv='refresh' content='0;url=http://10.0.10.1/simple-otp.html'></head><body>Portal</body></html>
+EOF
+
+cat > /www/connecttest.txt << 'EOF'
+<!DOCTYPE html><html><head><meta http-equiv='refresh' content='0;url=http://10.0.10.1/simple-otp.html'></head><body>Redirect</body></html>
+EOF
+
+mkdir -p /www/library/test
+cp /www/hotspot-detect.html /www/library/test/success.html
+
+logger -t captive-firewall "Created captive portal detection pages"
+
+/etc/init.d/dnsmasq restart
+logger -t captive-firewall "Restarted dnsmasq"
+
+iptables -t nat -C POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+iptables -t nat -C POSTROUTING -p tcp -d 192.168.56.1 --dport 5000 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -p tcp -d 192.168.56.1 --dport 5000 -j MASQUERADE
+logger -t captive-firewall "Set up NAT POSTROUTING"
+
+iptables -t nat -I PREROUTING 1 -i eth1 -p tcp --dport 80 -j DNAT --to-destination 10.0.10.1:80
+logger -t captive-firewall "Set up HTTP redirect"
+
+iptables -t nat -A PREROUTING -i eth1 -p tcp --dport 8080 -j DNAT --to-destination 192.168.56.1:5000
+logger -t captive-firewall "Set up OTP server port forwarding"
+
+logger -t captive-firewall "Captive portal firewall setup complete!"
+logger -t captive-firewall "Using RFC 8910 compliant detection - browsers should detect portal properly"

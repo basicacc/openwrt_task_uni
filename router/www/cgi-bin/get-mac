@@ -1,0 +1,25 @@
+#!/bin/sh
+
+echo "Content-Type: application/json"
+echo "Cache-Control: no-cache"
+echo ""
+
+CLIENT_IP="$REMOTE_ADDR"
+
+if [ -z "$CLIENT_IP" ]; then
+    echo '{"success":false,"error":"Could not detect client IP"}'
+    exit 1
+fi
+
+MAC=$(ip neigh show "$CLIENT_IP" | awk '{print $5}' | head -1)
+
+if [ -z "$MAC" ] || [ "$MAC" = "(incomplete)" ]; then
+    MAC=$(cat /proc/net/arp | grep "$CLIENT_IP" | awk '{print $4}' | head -1)
+fi
+
+if [ -z "$MAC" ] || [ "$MAC" = "00:00:00:00:00:00" ]; then
+    echo "{\"success\":false,\"error\":\"Could not find MAC for IP $CLIENT_IP\"}"
+    exit 1
+fi
+
+echo "{\"success\":true,\"mac\":\"$MAC\",\"ip\":\"$CLIENT_IP\"}"

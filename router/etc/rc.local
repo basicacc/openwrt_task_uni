@@ -1,0 +1,5 @@
+ip route add 192.168.56.0/24 dev eth2
+
+/etc/firewall.captive &
+
+exit 0

@@ -1,0 +1,67 @@
+#!/bin/sh
+
+ACTION="$1"
+MAC="$2"
+IP="$3"
+
+if [ "$ACTION" != "list" ] && [ -z "$MAC" ]; then
+    echo "Usage: $0 <auth|deauth|list> <mac> [ip]"
+    exit 1
+fi
+
+case "$ACTION" in
+    auth)
+        iptables -C CAPTIVE_ACCEPT -m mac --mac-source $MAC -j ACCEPT 2>/dev/null
+        if [ $? -ne 0 ]; then
+            iptables -I CAPTIVE_ACCEPT 1 -m mac --mac-source $MAC -j ACCEPT
+            echo "Client $MAC authenticated (internet access granted)"
+            logger -t captive-portal "Authenticated client $MAC ($IP)"
+        fi
+
+        iptables -C CAPTIVE_DNS -m mac --mac-source $MAC -j ACCEPT 2>/dev/null
+        if [ $? -ne 0 ]; then
+            iptables -I CAPTIVE_DNS 1 -m mac --mac-source $MAC -j ACCEPT
+            echo "Client $MAC DNS firewall bypass enabled"
+        fi
+
+        iptables -t nat -C PREROUTING -i eth1 -p tcp --dport 80 -m mac --mac-source $MAC -j RETURN 2>/dev/null
+        if [ $? -ne 0 ]; then
+            iptables -t nat -I PREROUTING 1 -i eth1 -p tcp --dport 80 -m mac --mac-source $MAC -j RETURN
+            echo "Client $MAC HTTP redirect bypass enabled"
+        fi
+
+        if [ -n "$IP" ]; then
+            iptables -t nat -C PREROUTING -s $IP -p udp --dport 53 -j DNAT --to 8.8.8.8:53 2>/dev/null
+            if [ $? -ne 0 ]; then
+                iptables -t nat -I PREROUTING 1 -s $IP -p udp --dport 53 -j DNAT --to 8.8.8.8:53
+                iptables -t nat -I PREROUTING 1 -s $IP -p tcp --dport 53 -j DNAT --to 8.8.8.8:53
+                echo "Client $IP DNS redirected to real internet (8.8.8.8)"
+            fi
+        fi
+        ;;
+    deauth)
+        iptables -D CAPTIVE_ACCEPT -m mac --mac-source $MAC -j ACCEPT 2>/dev/null
+        echo "Client $MAC deauthenticated"
+
+        iptables -D CAPTIVE_DNS -m mac --mac-source $MAC -j ACCEPT 2>/dev/null
+
+        iptables -t nat -D PREROUTING -i eth1 -p tcp --dport 80 -m mac --mac-source $MAC -j RETURN 2>/dev/null
+
+        if [ -n "$IP" ]; then
+            iptables -t nat -D PREROUTING -s $IP -p udp --dport 53 -j DNAT --to 8.8.8.8:53 2>/dev/null
+            iptables -t nat -D PREROUTING -s $IP -p tcp --dport 53 -j DNAT --to 8.8.8.8:53 2>/dev/null
+            echo "Client $IP DNS redirect removed"
+        fi
+        ;;
+    list)
+        echo "=== Authenticated clients ==="
+        iptables -L CAPTIVE_ACCEPT -n -v
+        echo ""
+        echo "=== NAT Rules ==="
+        iptables -t nat -L PREROUTING -n --line-numbers | head -10
+        ;;
+    *)
+        echo "Usage: $0 <auth|deauth|list> <mac> [ip]"
+        exit 1
+        ;;
+esac

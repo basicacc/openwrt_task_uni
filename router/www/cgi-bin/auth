@@ -1,0 +1,44 @@
+#!/bin/sh
+
+echo "Content-Type: application/json"
+echo ""
+
+parse_qs() {
+    local qs="$1"
+    echo "$qs" | tr '&' '\n' | while IFS='=' read key value; do
+        value=$(echo "$value" | sed 's/%3A/:/g;s/%20/ /g')
+        eval "QS_$key='$value'"
+    done
+}
+
+if [ -n "$QUERY_STRING" ]; then
+    for param in $(echo "$QUERY_STRING" | tr '&' ' '); do
+        key=$(echo "$param" | cut -d'=' -f1)
+        value=$(echo "$param" | cut -d'=' -f2- | sed 's/%3A/:/g;s/%20/ /g')
+        case "$key" in
+            action) action="$value" ;;
+            mac) mac="$value" ;;
+            ip) ip="$value" ;;
+        esac
+    done
+fi
+
+if [ "$action" = "list" ]; then
+    RESULT=$(/usr/bin/captive-auth list 2>&1)
+    echo "{\"status\":\"success\",\"message\":\"$RESULT\"}"
+    exit 0
+fi
+
+if [ -z "$action" ] || [ -z "$mac" ]; then
+    echo '{"status":"error","message":"Missing required parameters: action and mac"}'
+    exit 1
+fi
+
+RESULT=$(/usr/bin/captive-auth "$action" "$mac" "$ip" 2>&1)
+EXIT_CODE=$?
+
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "{\"status\":\"success\",\"message\":\"$RESULT\",\"mac\":\"$mac\",\"ip\":\"$ip\"}"
+else
+    echo "{\"status\":\"error\",\"message\":\"$RESULT\"}"
+fi

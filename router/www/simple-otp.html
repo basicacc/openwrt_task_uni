@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Simple OTP Login</title>
+    <style>
+        body { font-family: Arial; background: #667eea; padding: 50px; }
+        .box { background: white; padding: 40px; border-radius: 10px; max-width: 400px; margin: 0 auto; }
+        input { width: 100%; padding: 12px; margin: 10px 0; border: 2px solid #ddd; border-radius: 5px; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background: #28a745; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; margin-top: 10px; }
+        button:hover { background: #218838; }
+        .btn-link { width: 100%; padding: 12px; background: #667eea; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; margin-top: 10px; }
+        .btn-link:hover { background: #5568d3; }
+        #result { margin-top: 20px; padding: 15px; background: #f0f0f0; border-radius: 5px; display: none; }
+        #result.success { background: #d4edda; border: 2px solid #28a745; }
+        .otp { font-size: 32px; font-weight: bold; color: #667eea; letter-spacing: 5px; text-align: center; margin: 20px 0; }
+        .debug { font-size: 10px; color: #999; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h2>🔐 WiFi OTP Login</h2>
+
+        <div id="step1">
+            <input type="email" id="email" placeholder="Enter your email" value="test@test.com">
+            <button onclick="sendOTP()">Send OTP</button>
+        </div>
+
+        <div id="step2" style="display:none;">
+            <input type="text" id="otp" placeholder="Enter 6-digit OTP" maxlength="6">
+            <button onclick="verifyOTP()">Verify & Connect</button>
+        </div>
+
+        <div id="result"></div>
+        <div id="debug" class="debug"></div>
+    </div>
+
+    <script>
+        // Prevent caching
+        if (window.performance && window.performance.navigation.type === window.performance.navigation.TYPE_BACK_FORWARD) {
+            window.location.reload();
+        }
+
+        const API_BASE = '/cgi-bin/api-proxy';
+        let savedOTP = '';
+        let clientMAC = '00:00:00:00:00:00';  // Will be detected
+
+        // Detect client MAC address on page load
+        window.onload = function() {
+            detectClientMAC();
+        };
+
+        function detectClientMAC() {
+            fetch('/cgi-bin/get-mac', {
+                method: 'GET',
+                cache: 'no-cache'
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success && data.mac) {
+                    clientMAC = data.mac;
+                    document.getElementById('debug').innerHTML = 
+                        'Detected MAC: ' + clientMAC + ' | IP: ' + (data.ip || 'unknown');
+                    console.log('Client MAC detected:', clientMAC);
+                } else {
+                    console.error('Failed to detect MAC:', data);
+                    document.getElementById('debug').innerHTML = 
+                        'Warning: MAC detection failed - ' + (data.error || 'unknown error');
+                }
+            })
+            .catch(err => {
+                console.error('MAC detection error:', err);
+                document.getElementById('debug').innerHTML = 
+                    'Warning: MAC detection error - ' + err.message;
+            });
+        }
+
+        function sendOTP() {
+            const email = document.getElementById('email').value;
+            const result = document.getElementById('result');
+            result.style.display = 'block';
+            result.className = '';
+            result.innerHTML = '⏳ Sending...';
+
+            fetch(API_BASE + '/request_otp', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    email: email,
+                    mac: clientMAC
+                })
+            })
+            .then(r => {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then(data => {
+                console.log('Response:', data);
+                if (data.success) {
+                    savedOTP = data.otp || '';
+                    result.innerHTML = '✅ OTP Sent!<div class="otp">' + (savedOTP || 'Check server logs') + '</div>';
+                    document.getElementById('step1').style.display = 'none';
+                    document.getElementById('step2').style.display = 'block';
+                } else {
+                    result.innerHTML = '❌ Error: ' + (data.error || 'Unknown error');
+                }
+            })
+            .catch(err => {
+                console.error('Error:', err);
+                result.innerHTML = '❌ Connection error: ' + err.message;
+            });
+        }
+
+        function verifyOTP() {
+            const otp = document.getElementById('otp').value;
+            const result = document.getElementById('result');
+            result.innerHTML = '⏳ Verifying...';
+
+            fetch(API_BASE + '/verify_otp', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    otp: otp,
+                    mac: clientMAC
+                })
+            })
+            .then(r => {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then(data => {
+                console.log('Verify response:', data);
+                if (data.success) {
+                    // Show success message WITHOUT auto-redirect
+                    result.className = 'success';
+                    result.innerHTML = '<h3>✅ SUCCESS!</h3>' +
+                        '<p><strong>You are now connected to the internet!</strong></p>' +
+                        '<p>Close this window and open a new tab to browse.</p>' +
+                        '<button class="btn-link" onclick="window.close()">Close Window</button>' +
+                        '<br><a href="http://google.com" target="_blank" style="display:inline-block; margin-top:15px; color:#667eea; font-weight:bold;">Or click here to test →</a>';
+                } else {
+                    result.innerHTML = '❌ Error: ' + (data.error || 'Invalid OTP');
+                }
+            })
+            .catch(err => {
+                console.error('Error:', err);
+                result.innerHTML = '❌ Connection error: ' + err.message;
+            });
+        }
+    </script>
+</body>
+</html>

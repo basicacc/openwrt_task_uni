@@ -1,0 +1,56 @@
+#!/bin/sh
+
+CLIENT_IP="${REMOTE_ADDR}"
+
+CLIENT_MAC=$(cat /proc/net/arp | grep "^${CLIENT_IP}" | grep -v "00:00:00:00:00:00" | awk '{print $4}' | head -1)
+
+if [ -n "$CLIENT_MAC" ]; then
+    IS_AUTH=$(iptables -L CAPTIVE_ACCEPT -n | grep -i "$CLIENT_MAC" | wc -l)
+else
+    IS_AUTH=0
+fi
+
+REQUEST_URI="${REQUEST_URI}"
+
+if [ "$IS_AUTH" -gt 0 ]; then
+    case "$REQUEST_URI" in
+        */hotspot-detect.html|*/library/test/success.html)
+            echo "Content-Type: text/html"
+            echo "Cache-Control: no-cache"
+            echo ""
+            echo "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"
+            ;;
+        */generate_204|*/gen_204)
+            echo "Status: 204 No Content"
+            echo "Cache-Control: no-cache"
+            echo ""
+            ;;
+        */success.txt)
+            echo "Content-Type: text/plain"
+            echo "Cache-Control: no-cache"
+            echo ""
+            echo "success"
+            ;;
+        */connecttest.txt|*/ncsi.txt)
+            echo "Content-Type: text/plain"
+            echo "Cache-Control: no-cache"
+            echo ""
+            echo "Microsoft Connect Test"
+            ;;
+        *)
+            echo "Content-Type: text/html"
+            echo "Cache-Control: no-cache"
+            echo ""
+            echo "<!DOCTYPE html><html><head><title>Success</title></head><body>Success</body></html>"
+            ;;
+    esac
+else
+    echo "Status: 302 Found"
+    echo "Location: http://10.0.10.1/simple-otp.html"
+    echo "Cache-Control: no-cache, no-store, must-revalidate"
+    echo "Pragma: no-cache"
+    echo "Expires: 0"
+    echo "Content-Type: text/html"
+    echo ""
+    echo "<!DOCTYPE html><html><head><meta http-equiv='refresh' content='0;url=http://10.0.10.1/simple-otp.html'></head><body>Redirecting to captive portal...</body></html>"
+fi
